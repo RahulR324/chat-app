@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ChatController;
+use App\Http\Controllers\GroupController;
 
 Route::get('/', [ChatController::class, 'loginPage']);
 
@@ -14,3 +15,10 @@ Route::post('/send-message', [ChatController::class, 'sendMessage']);
 Route::get('/messages/{user}', [ChatController::class, 'loadMessages']);
 
 Route::get('/chat-sidebar', [ChatController::class, 'loadSidebar']);
+
+//groupchat
+
+Route::post('/group/store', [GroupController::class, 'storeGroup']);
+Route::get('/group/chat/{id}', [GroupController::class, 'openGroupChat']);
+Route::post('/group/send-message', [GroupController::class, 'sendMessage']);
+Route::get('/group/messages/{id}', [GroupController::class, 'loadMessages']);

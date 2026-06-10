@@ -5,6 +5,9 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\Message;
+use App\Models\Group;
+use App\Models\GroupMember;
+use App\Models\GroupMessage;
 
 class ChatController extends Controller
 {
@@ -30,52 +33,96 @@ class ChatController extends Controller
         return redirect('/chat');
     }
 
-    public function chat(Request $request)
+public function chat(Request $request)
+{
+    if (!session()->has('user_id')) {
+        return redirect('/');
+    }
+
+    $users = User::where('id', '!=', session('user_id'))->get();
+
+    $groups = Group::whereHas('members', function ($query) {
+        $query->where('user_id', session('user_id'));
+    })->get();
+
+    foreach ($users as $user) {
+
+        $lastMessage = Message::where(function ($query) use ($user) {
+
+            $query->where('sender_id', session('user_id'))
+                  ->where('receiver_id', $user->id);
+
+        })
+        ->orWhere(function ($query) use ($user) {
+
+            $query->where('sender_id', $user->id)
+                  ->where('receiver_id', session('user_id'));
+
+        })
+        ->latest('id')
+        ->first();
+
+        $user->last_message =
+            $lastMessage
+            ? $lastMessage->message
+            : 'No messages yet';
+
+        $user->last_message_time =
+            $lastMessage
+            ? $lastMessage->created_at->format('h:i A')
+            : '';
+    }
+
+    $receiver = null;
+    $selectedGroup = null;
+    $messages = collect();
+
+    // Private Chat
+    if ($request->user)
     {
-        if (!session()->has('user_id')) {
-            return redirect('/');
-        }
+        $receiver = User::find($request->user);
 
-        $users = User::where('id', '!=', session('user_id'))->get();
+        if ($receiver)
+        {
+            $messages = Message::where(function ($query) use ($receiver) {
 
-        foreach ($users as $user) {
-            $lastMessage = Message::where(function ($query) use ($user) {
                 $query->where('sender_id', session('user_id'))
-                      ->where('receiver_id', $user->id);
+                      ->where('receiver_id', $receiver->id);
+
             })
-            ->orWhere(function ($query) use ($user) {
-                $query->where('sender_id', $user->id)
+            ->orWhere(function ($query) use ($receiver) {
+
+                $query->where('sender_id', $receiver->id)
                       ->where('receiver_id', session('user_id'));
+
             })
-            ->latest('id')
-            ->first();
-
-            $user->last_message = $lastMessage ? $lastMessage->message : 'No messages yet';
-            $user->last_message_time = $lastMessage ? $lastMessage->created_at->format('h:i A') : '';
+            ->orderBy('id', 'asc')
+            ->get();
         }
+    }
 
-        $receiver = null;
-        $messages = collect();
+    // Group Chat
+    if ($request->group)
+    {
+        $selectedGroup = Group::find($request->group);
 
-        if ($request->user) {
-            $receiver = User::find($request->user);
-
-            if ($receiver) {
-                $messages = Message::where(function ($query) use ($receiver) {
-                    $query->where('sender_id', session('user_id'))
-                          ->where('receiver_id', $receiver->id);
-                })
-                ->orWhere(function ($query) use ($receiver) {
-                    $query->where('sender_id', $receiver->id)
-                          ->where('receiver_id', session('user_id'));
-                })
+        if ($selectedGroup)
+        {
+            $messages = \App\Models\GroupMessage::with('sender')
+                ->where('group_id', $selectedGroup->id)
                 ->orderBy('id', 'asc')
                 ->get();
-            }
         }
-
-        return view('chat', compact('users', 'receiver', 'messages'));
     }
+
+    return view('chat', compact(
+        'users',
+        'groups',
+        'receiver',
+        'selectedGroup',
+        'messages'
+    ));
+}
 
     public function sendMessage(Request $request)
     {

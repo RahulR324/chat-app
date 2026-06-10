@@ -14,4 +14,9 @@ class User extends Model
         'name',
         'email'
     ];
+
+    public function groupMessages()
+    {
+        return $this->hasMany(GroupMessage::class, 'sender_id');
+    }
 }
