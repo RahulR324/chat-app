@@ -4,6 +4,9 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\GroupController;
 
+
+Route::get('/check-notification', [chatController::class, 'checkNotification']);
+
 Route::get('/', [ChatController::class, 'loginPage']);
 
 Route::post('/login', [ChatController::class, 'login']);

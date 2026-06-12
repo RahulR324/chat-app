@@ -155,4 +155,39 @@ public function chat(Request $request)
 
         return response()->json($messages);
     }
+
+   public function checkNotification()
+{
+    $userId = session('user_id');
+
+    $latestPrivate = Message::with('sender')
+        ->where('receiver_id', $userId)
+        ->latest('id')
+        ->first();
+
+    $latestGroup = GroupMessage::with(['sender', 'group'])
+        ->whereIn(
+            'group_id',
+            GroupMember::where('user_id', $userId)
+                ->pluck('group_id')
+        )
+        ->where('sender_id', '!=', $userId)
+        ->latest('id')
+        ->first();
+
+    return response()->json([
+        'private' => $latestPrivate ? [
+            'id' => $latestPrivate->id,
+            'message' => $latestPrivate->message,
+            'sender_name' => $latestPrivate->sender->name
+        ] : null,
+
+        'group' => $latestGroup ? [
+            'id' => $latestGroup->id,
+            'message' => $latestGroup->message,
+            'sender_name' => $latestGroup->sender->name,
+            'group_name' => $latestGroup->group->group_name
+        ] : null
+    ]);
+}
 }
