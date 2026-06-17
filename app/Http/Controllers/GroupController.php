@@ -13,7 +13,7 @@ class GroupController extends Controller
     {
         $request->validate([
             'group_name' => 'required',
-            'members' => 'required|array'
+            'members'    => 'required|array'
         ]);
 
         // Create Group
@@ -29,10 +29,9 @@ class GroupController extends Controller
         }
 
         foreach ($members as $userId) {
-
             GroupMember::create([
                 'group_id' => $group->id,
-                'user_id' => $userId
+                'user_id'  => $userId
             ]);
         }
 
@@ -64,13 +63,13 @@ class GroupController extends Controller
     {
         $request->validate([
             'group_id' => 'required',
-            'message' => 'required'
+            'message'  => 'required'
         ]);
 
         GroupMessage::create([
-            'group_id' => $request->group_id,
+            'group_id'  => $request->group_id,
             'sender_id' => session('user_id'),
-            'message' => $request->message
+            'message'   => $request->message
         ]);
 
         return response()->json([
@@ -78,20 +77,26 @@ class GroupController extends Controller
         ]);
     }
 
-    public function loadMessages($id)
+    public function loadMessages(Request $request, $id)
     {
-        $messages = GroupMessage::where('group_id', $id)
-            ->orderBy('id', 'asc')
+        $lastId = $request->get('last_id', 0);
+
+        $messages = GroupMessage::with('sender')
+            ->where('group_id', $id)
+            ->where('id', '>', $lastId)
+            ->orderBy('id')
             ->get();
 
-        foreach ($messages as $msg) {
-
-            $msg->sender_name = $msg->sender->name;
-
-            $msg->formatted_time =
-                $msg->created_at->format('h:i A');
-        }
-
-        return response()->json($messages);
+        return response()->json(
+            $messages->map(function ($msg) {
+                return [
+                    'id'             => $msg->id,
+                    'sender_id'      => $msg->sender_id,
+                    'message'        => $msg->message,
+                    'sender_name'    => $msg->sender->name,
+                    'formatted_time' => $msg->created_at->format('h:i A')
+                ];
+            })
+        );
     }
 }

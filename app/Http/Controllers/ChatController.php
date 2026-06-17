@@ -33,96 +33,71 @@ class ChatController extends Controller
         return redirect('/chat');
     }
 
-public function chat(Request $request)
-{
-    if (!session()->has('user_id')) {
-        return redirect('/');
-    }
-
-    $users = User::where('id', '!=', session('user_id'))->get();
-
-    $groups = Group::whereHas('members', function ($query) {
-        $query->where('user_id', session('user_id'));
-    })->get();
-
-    foreach ($users as $user) {
-
-        $lastMessage = Message::where(function ($query) use ($user) {
-
-            $query->where('sender_id', session('user_id'))
-                  ->where('receiver_id', $user->id);
-
-        })
-        ->orWhere(function ($query) use ($user) {
-
-            $query->where('sender_id', $user->id)
-                  ->where('receiver_id', session('user_id'));
-
-        })
-        ->latest('id')
-        ->first();
-
-        $user->last_message =
-            $lastMessage
-            ? $lastMessage->message
-            : 'No messages yet';
-
-        $user->last_message_time =
-            $lastMessage
-            ? $lastMessage->created_at->format('h:i A')
-            : '';
-    }
-
-    $receiver = null;
-    $selectedGroup = null;
-    $messages = collect();
-
-    // Private Chat
-    if ($request->user)
+    public function chat(Request $request)
     {
-        $receiver = User::find($request->user);
-
-        if ($receiver)
-        {
-            $messages = Message::where(function ($query) use ($receiver) {
-
-                $query->where('sender_id', session('user_id'))
-                      ->where('receiver_id', $receiver->id);
-
-            })
-            ->orWhere(function ($query) use ($receiver) {
-
-                $query->where('sender_id', $receiver->id)
-                      ->where('receiver_id', session('user_id'));
-
-            })
-            ->orderBy('id', 'asc')
-            ->get();
+        if (!session()->has('user_id')) {
+            return redirect('/');
         }
-    }
 
-    // Group Chat
-    if ($request->group)
-    {
-        $selectedGroup = Group::find($request->group);
+        $users = User::where('id', '!=', session('user_id'))->get();
 
-        if ($selectedGroup)
-        {
-            $messages = \App\Models\GroupMessage::with('sender')
-                ->where('group_id', $selectedGroup->id)
+        $groups = Group::whereHas('members', function ($query) {
+            $query->where('user_id', session('user_id'));
+        })->get();
+
+        $currentUserId = session('user_id');
+
+        $allMessages = Message::where(function ($query) use ($currentUserId) {
+            $query->where('sender_id', $currentUserId)
+                  ->orWhere('receiver_id', $currentUserId);
+        })
+        ->orderByDesc('id')
+        ->get();
+
+        foreach ($users as $user) {
+            $lastMessage = $allMessages->first(function ($message) use ($user, $currentUserId) {
+                return (
+                    ($message->sender_id == $currentUserId && $message->receiver_id == $user->id) ||
+                    ($message->sender_id == $user->id && $message->receiver_id == $currentUserId)
+                );
+            });
+
+            $user->last_message = $lastMessage ? $lastMessage->message : 'No messages yet';
+            $user->last_message_time = $lastMessage ? $lastMessage->created_at->format('h:i A') : '';
+        }
+
+        $receiver = null;
+        $selectedGroup = null;
+        $messages = collect();
+
+        // Private Chat
+        if ($request->user) {
+            $receiver = User::find($request->user);
+            if ($receiver) {
+                $messages = Message::where(function ($query) use ($receiver) {
+                    $query->where('sender_id', session('user_id'))->where('receiver_id', $receiver->id);
+                })
+                ->orWhere(function ($query) use ($receiver) {
+                    $query->where('sender_id', $receiver->id)->where('receiver_id', session('user_id'));
+                })
                 ->orderBy('id', 'asc')
                 ->get();
+            }
         }
-    }
 
-    return view('chat', compact(
-        'users',
-        'groups',
-        'receiver',
-        'selectedGroup',
-        'messages'
-    ));
-}
+        // Group Chat
+        if ($request->group) {
+            $selectedGroup = Group::find($request->group);
+            if ($selectedGroup) {
+                $messages = GroupMessage::with('sender')
+                    ->where('group_id', $selectedGroup->id)
+                    ->orderBy('id', 'asc')
+                    ->get();
+            }
+        }
+
+        return view('chat', compact('users', 'groups', 'receiver', 'selectedGroup', 'messages'));
+    }
 
     public function sendMessage(Request $request)
     {
@@ -135,59 +110,61 @@ public function chat(Request $request)
         return response()->json(['success' => true]);
     }
 
-    public function loadMessages($userId)
+    public function loadMessages(Request $request, $userId)
     {
+        $lastId = $request->get('last_id', 0);
+
         $messages = Message::where(function ($query) use ($userId) {
-            $query->where('sender_id', session('user_id'))
-                  ->where('receiver_id', $userId);
+            $query->where('sender_id', session('user_id'))->where('receiver_id', $userId);
         })
         ->orWhere(function ($query) use ($userId) {
-            $query->where('sender_id', $userId)
-                  ->where('receiver_id', session('user_id'));
+            $query->where('sender_id', $userId)->where('receiver_id', session('user_id'));
         })
-        ->orderBy('id', 'asc')
+        ->where('id', '>', $lastId)
+        ->orderBy('id')
         ->get();
 
-        $messages = $messages->map(function ($message) {
-            $message->formatted_time = $message->created_at->format('h:i A');
-            return $message;
-        });
-
-        return response()->json($messages);
+        return response()->json(
+            $messages->map(function ($message) {
+                return [
+                    'id' => $message->id,
+                    'sender_id' => $message->sender_id,
+                    'message' => $message->message,
+                    'formatted_time' => $message->created_at->format('h:i A')
+                ];
+            })
+        );
     }
 
-   public function checkNotification()
-{
-    $userId = session('user_id');
+    public function checkNotification()
+    {
+        $userId = session('user_id');
 
-    $latestPrivate = Message::with('sender')
-        ->where('receiver_id', $userId)
-        ->latest('id')
-        ->first();
+        $latestPrivate = Message::with('sender')
+            ->where('receiver_id', $userId)
+            ->latest('id')
+            ->first();
 
-    $latestGroup = GroupMessage::with(['sender', 'group'])
-        ->whereIn(
-            'group_id',
-            GroupMember::where('user_id', $userId)
-                ->pluck('group_id')
-        )
-        ->where('sender_id', '!=', $userId)
-        ->latest('id')
-        ->first();
+        $latestGroup = GroupMessage::with(['sender', 'group'])
+            ->whereIn('group_id', GroupMember::where('user_id', $userId)->pluck('group_id'))
+            ->where('sender_id', '!=', $userId)
+            ->latest('id')
+            ->first();
 
-    return response()->json([
-        'private' => $latestPrivate ? [
-            'id' => $latestPrivate->id,
-            'message' => $latestPrivate->message,
-            'sender_name' => $latestPrivate->sender->name
-        ] : null,
+        return response()->json([
+            'private' => $latestPrivate ? [
+                'id' => $latestPrivate->id,
+                'sender_id' => $latestPrivate->sender_id,
+                'message' => $latestPrivate->message,
+                'sender_name' => $latestPrivate->sender->name
+            ] : null,
 
-        'group' => $latestGroup ? [
-            'id' => $latestGroup->id,
-            'message' => $latestGroup->message,
-            'sender_name' => $latestGroup->sender->name,
-            'group_name' => $latestGroup->group->group_name
-        ] : null
-    ]);
-}
+            'group' => $latestGroup ? [
+                'id' => $latestGroup->id,
+                'message' => $latestGroup->message,
+                'sender_name' => $latestGroup->sender->name,
+                'group_name' => $latestGroup->group->group_name
+            ] : null
+        ]);
+    }
 }

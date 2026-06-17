@@ -90,7 +90,9 @@
                     @else
                         <div class="message-row left">
                             <div class="message received">
-                                @if($selectedGroup) <strong style="font-size:13px; color:#555; margin-bottom:2px; display:block;">{{ $msg->sender->name }}</strong> @endif
+                                @if($selectedGroup) 
+                                    <strong style="font-size:13px; color:#555; margin-bottom:2px; display:block;">{{ $msg->sender->name }}</strong> 
+                                @endif
                                 <div>{{ $msg->message }}</div>
                                 <small class="message-time">{{ $msg->created_at->format('h:i A') }}</small>
                             </div>
@@ -152,176 +154,152 @@
 </div>
 
 <script>
-    let previousMessageCount = 0;
     let lastPrivateId = 0;
     let lastGroupId = 0;
-    if ("Notification" in window)
-    {
+    let lastMessageId = 0;
+
+    if ("Notification" in window && Notification.permission === "default") {
         Notification.requestPermission();
     }
 
-    /* ==========================
-       Notification
-    ========================== */
-    function showNotification(title, message)
-    {
-        const notification =
-            document.getElementById('chatNotification');
-
-        if(notification)
-        {
-            document.getElementById('notificationTitle')
-                .innerText = title;
-
-            document.getElementById('notificationMessage')
-                .innerText = message;
-
+    /* Helper: Show UI Notification */
+    function showNotification(title, message) {
+        const notification = document.getElementById('chatNotification');
+        if (notification) {
+            document.getElementById('notificationTitle').innerText = title;
+            document.getElementById('notificationMessage').innerText = message;
             notification.style.display = 'block';
-
             clearTimeout(notification.hideTimer);
-
             notification.hideTimer = setTimeout(() => {
-
                 notification.style.display = 'none';
-
             }, 3000);
         }
 
-        // Browser Notification
-
-        if(
-            "Notification" in window &&
-            Notification.permission === "granted"
-        )
-        {
+        if ("Notification" in window && Notification.permission === "granted") {
             new Notification(title, {
-
                 body: message,
-
                 icon: "{{ asset('favicon.ico') }}"
-
             });
         }
     }
+    const currentReceiverId = {{ $receiver ? $receiver->id : 'null' }};
 
-    /* ==========================
-       Global Notifications
-    ========================== */
+    /* Poll for Global Notifications */
     function checkNotifications() {
         fetch('/check-notification')
         .then(response => response.json())
         .then(data => {
-            if (data.private) {
-                if (lastPrivateId !== 0 && data.private.id > lastPrivateId) {
-                    showNotification(data.private.sender_name, data.private.message);
+            if (data.private && lastPrivateId !== 0 && data.private.id > lastPrivateId) {
+                if (
+                    currentReceiverId === null ||
+                    data.private.sender_id != currentReceiverId
+                ){
+                    showNotification(
+                        data.private.sender_name,
+                        data.private.message
+                    );
                 }
-                lastPrivateId = data.private.id;
             }
+            if (data.private) lastPrivateId = data.private.id;
 
-            if (data.group) {
-                if (lastGroupId !== 0 && data.group.id > lastGroupId) {
-                    showNotification(data.group.group_name + ' - ' + data.group.sender_name, data.group.message);
-                }
-                lastGroupId = data.group.id;
+            if (data.group && lastGroupId !== 0 && data.group.id > lastGroupId) {
+                showNotification(data.group.group_name + ' - ' + data.group.sender_name, data.group.message);
             }
+            if (data.group) lastGroupId = data.group.id;
         })
         .catch(error => console.log(error));
     }
 
-    /* ==========================
-       Load Messages
-    ========================== */
-    @if($receiver || $selectedGroup)
-    function loadMessages() {
-        @if($receiver)
-            let fetchUrl = '/messages/{{ $receiver->id }}';
-        @else
-            let fetchUrl = '/group/messages/{{ $selectedGroup->id }}';
+    function escapeHtml(text)
+    {
+        const div =
+            document.createElement('div');
+
+            div.textContent = text;
+
+        return div.innerHTML;
+    }
+
+    /* Append Message to UI */
+    function appendMessage(message) {
+        let senderInfo = '';
+        @if($selectedGroup)
+            if (message.sender_id != {{ session('user_id') }} && message.sender_name) {
+                senderInfo = `<strong style="font-size:13px;color:#555;display:block;margin-bottom:2px;">${message.sender_name}</strong>`;
+            }
         @endif
 
-        fetch(fetchUrl)
+        let html = (message.sender_id == {{ session('user_id') }}) 
+            ? `<div class="message-row right"><div class="message sent"><div>${escapeHtml(message.message)}</div><small class="message-time">${message.formatted_time}</small></div></div>`
+            : `<div class="message-row left"><div class="message received">${senderInfo}<div>${escapeHtml(message.message)}</div><small class="message-time">${message.formatted_time}</small></div></div>`;
+
+        document.getElementById('messages').insertAdjacentHTML('beforeend', html);
+    }
+
+    /* Load Messages */
+    function loadMessages() {
+        let fetchUrl = @if($receiver) '/messages/{{ $receiver->id }}' @else '/group/messages/{{ $selectedGroup->id }}' @endif;
+
+        fetch(fetchUrl + '?last_id=' + lastMessageId)
         .then(response => response.json())
         .then(data => {
-            if (previousMessageCount > 0 && data.length > previousMessageCount) {
-                let latestMessage = data[data.length - 1];
-                if (latestMessage.sender_id != {{ session('user_id') }}) {
-                    let senderName = 'New Message';
-                    @if($receiver)
-                        senderName = '{{ $receiver ? $receiver->name : "" }}';
-                    @else
-                        senderName = latestMessage.sender_name;
-                    @endif
-                    showNotification(senderName, latestMessage.message);
+            if (data.length > 0) {
+                data.forEach(message => {
+                    appendMessage(message);
+                    lastMessageId = message.id;
+                });
+                let chatBox = document.getElementById('messages');
+                let shouldScroll = 
+                    chatBox.scrollHeight -
+                    chatBox.scrollTop -
+                    chatBox.clientHeight < 100;
+
+                if(shouldScroll){
+                    const nearBottom =
+                    chatBox.scrollHeight -
+                    chatBox.scrollTop -
+                    chatBox.clientHeight < 150;
+
+                    if (nearBottom)
+                    {
+                        chatBox.scrollTop =
+                        chatBox.scrollHeight;
+                    }
                 }
             }
-
-            previousMessageCount = data.length;
-            let html = '';
-            data.forEach(message => {
-                let senderInfo = '';
-                @if($selectedGroup)
-                    if (message.sender_id != {{ session('user_id') }}) {
-                        senderInfo = `<strong style="font-size:13px; color:#555; margin-bottom:2px; display:block;">${message.sender_name}</strong>`;
-                    }
-                @endif 
-
-                if (message.sender_id == {{ session('user_id') }}) {
-                    html += `
-                        <div class="message-row right">
-                            <div class="message sent">
-                                <div>${message.message}</div>
-                                <small class="message-time">${message.formatted_time}</small>
-                            </div>
-                        </div>`;
-                } else {
-                    html += `
-                        <div class="message-row left">
-                            <div class="message received">
-                                ${senderInfo}
-                                <div>${message.message}</div>
-                                <small class="message-time">${message.formatted_time}</small>
-                            </div>
-                        </div>`;
-                }
-            });
-
-            document.getElementById('messages').innerHTML = html;
-            let chatBox = document.getElementById('messages');
-            chatBox.scrollTop = chatBox.scrollHeight;
         })
         .catch(error => console.error('Fetch Error:', error));
     }
 
+    /* Form Submission */
     const messageForm = document.getElementById('messageForm');
     if (messageForm) {
         messageForm.addEventListener('submit', function(e) {
             e.preventDefault();
             let formData = new FormData(this);
-            let sendUrl = @if($receiver) '/send-message' @else '/group/send-message' @endif;
-
-            fetch(sendUrl, {
+            fetch(@if($receiver) '/send-message' @else '/group/send-message' @endif, {
                 method: 'POST',
-                headers: {
-                    'X-CSRF-TOKEN': document.querySelector('input[name="_token"]').value
-                },
+                headers: { 'X-CSRF-TOKEN': document.querySelector('input[name="_token"]').value },
                 body: formData
             })
-            .then(response => response.json())
-            .then(data => {
+            .then(() => {
                 document.getElementById('messageInput').value = '';
-                loadMessages();
             })
             .catch(error => console.log(error));
         });
     }
 
-    loadMessages();
-    setInterval(loadMessages, 2000);
+    /* Initialize */
+    @if($messages->count())
+        lastMessageId = {{ $messages->last()->id }};
     @endif
 
-    /* ==========================
-       Group Modal Logic
-    ========================== */
+    loadMessages();
+    setInterval(loadMessages, 3000);
+    checkNotifications();
+    setInterval(checkNotifications, 5000);
+
+    /* UI Interaction Logic */
     const modal = document.getElementById('groupModal');
     const openBtn = document.getElementById('openGroupModal');
     const closeBtn = document.getElementById('closeGroupModal');
@@ -329,74 +307,32 @@
     const openSidebarBtn = document.getElementById('openSidebar');
     const closeSidebarBtn = document.getElementById('closeSidebar');
 
-    if (openSidebarBtn) {
-        openSidebarBtn.addEventListener('click', () => {
-            chatContainer?.classList.add('sidebar-open');
-            document.body.style.overflow = 'hidden';
-        });
-    }
-
-    if (closeSidebarBtn) {
-        closeSidebarBtn.addEventListener('click', () => {
-            chatContainer?.classList.remove('sidebar-open');
-            document.body.style.overflow = 'auto';
-        });
-    }
-
-    if (openBtn) openBtn.addEventListener('click', () => {
-        modal.style.display = 'flex';
-        modal.classList.add('show');
-    });
+    openSidebarBtn?.addEventListener('click', () => { chatContainer?.classList.add('sidebar-open'); document.body.style.overflow = 'hidden'; });
+    closeSidebarBtn?.addEventListener('click', () => { chatContainer?.classList.remove('sidebar-open'); document.body.style.overflow = 'auto'; });
+    openBtn?.addEventListener('click', () => { modal.style.display = 'flex'; modal.classList.add('show'); document.body.style.overflow = 'hidden'; });
+    closeBtn?.addEventListener('click', () => { modal.style.display = 'none'; modal.classList.remove('show'); document.body.style.overflow = 'auto'; });
     
-    if (closeBtn) closeBtn.addEventListener('click', () => {
-        modal.style.display = 'none';
-        modal.classList.remove('show');
-    });
+    window.addEventListener('click', (e) => { if (e.target === modal) { modal.style.display = 'none'; modal.classList.remove('show'); document.body.style.overflow = 'auto'; } });
 
-    window.addEventListener('click', (event) => {
-        if (event.target === modal) {
-            modal.style.display = 'none';
-            modal.classList.remove('show');
-        }
-    });
+    function updateViewportHeight()
+    {
+        let vh = window.visualViewport
+            ? window.visualViewport.height * 0.01
+            : window.innerHeight * 0.01;
 
-    function updateViewportHeight() {
-        document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
+            document.documentElement.style.setProperty(
+            '--vh',
+            `${vh}px`
+        );
     }
-
     updateViewportHeight();
     window.addEventListener('resize', updateViewportHeight);
-
-    /* ==========================
-       Start Global Notifications
-    ========================== */
-    checkNotifications();
-    setInterval(checkNotifications, 2000);
-
-    /* ==========================
-       Prevent body scroll on mobile when modal is open
-    ========================== */
-    const originalModal = document.getElementById('groupModal');
-    const originalOpenBtn = document.getElementById('openGroupModal');
-    
-    if (originalOpenBtn) {
-        originalOpenBtn.addEventListener('click', () => {
-            document.body.style.overflow = 'hidden';
-        });
-    }
-
-    if (originalModal) {
-        window.addEventListener('click', (event) => {
-            if (event.target === originalModal) {
-                document.body.style.overflow = 'auto';
-            }
-        });
-    }
-
-    if (closeBtn) {
-        closeBtn.addEventListener('click', () => {
-            document.body.style.overflow = 'auto';
-        });
+    if (window.visualViewport)
+    {
+        window.visualViewport.addEventListener(
+            'resize',
+            updateViewportHeight
+        );
     }
 </script>
 
